@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::io;
 use std::os::fd::AsFd;
-use std::sync::mpsc;
+use tokio::sync::mpsc;
 
 use os_pipe::{pipe, PipeReader};
 use wayland_client::globals::GlobalListContents;
@@ -184,8 +184,6 @@ impl Dispatch<ZwlrDataControlDeviceV1, WlSeat> for State {
         _conn: &wayland_client::Connection,
         _qh: &wayland_client::QueueHandle<Self>,
     ) {
-        println!("event: ZwlrDataControlDeviceV1");
-
         match event {
             zwlr_data_control_device_v1::Event::DataOffer { id } => {
                 state.offers.insert(id.clone(), HashSet::new());
@@ -228,23 +226,19 @@ impl Dispatch<ZwlrDataControlOfferV1, ()> for State {
         _conn: &wayland_client::Connection,
         _qhandle: &wayland_client::QueueHandle<Self>,
     ) {
-        println!("event: ZwlrDataControlOfferV1");
-
         if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
             state.offers.get_mut(offer).unwrap().insert(mime_type);
         }
     }
 }
 
-fn get_offer<F>(
+async fn get_offer(
     primary: bool,
     seat: Seat<'_>,
+    mime_type: MimeType<'_>,
+    tx: mpsc::Sender<(PipeReader, String)>,
     socket_name: Option<OsString>,
-    f: F,
-) -> Result<(), Error>
-where
-    F: Fn(&mut State, ZwlrDataControlOfferV1) -> Result<(), Error>,
-{
+) -> Result<(), Error> {
     let (mut queue, mut common) = initialize(primary, socket_name)?;
 
     // Check if there are no seats.
@@ -300,7 +294,42 @@ where
         // Check if we found anything.
         match offer.clone() {
             Some(offer) => {
-                f(&mut state, offer)?;
+                let mut mime_types = state.offers.remove(&offer).unwrap();
+
+                // Find the desired MIME type.
+                let mime_type = match mime_type {
+                    MimeType::Any => mime_types
+                        .take("text/plain;charset=utf-8")
+                        .or_else(|| mime_types.take("UTF8_STRING"))
+                        .or_else(|| mime_types.iter().find(|x| is_text(x)).cloned())
+                        .or_else(|| mime_types.drain().next()),
+                    MimeType::Text => mime_types
+                        .take("text/plain;charset=utf-8")
+                        .or_else(|| mime_types.take("UTF8_STRING"))
+                        .or_else(|| mime_types.drain().find(|x| is_text(x))),
+                    MimeType::TextWithPriority(priority) => mime_types
+                        .take(priority)
+                        .or_else(|| mime_types.take("text/plain;charset=utf-8"))
+                        .or_else(|| mime_types.take("UTF8_STRING"))
+                        .or_else(|| mime_types.drain().find(|x| is_text(x))),
+                    MimeType::Specific(mime_type) => mime_types.take(mime_type),
+                };
+
+                // Check if a suitable MIME type is copied.
+                if mime_type.is_none() {
+                    return Err(Error::NoMimeType);
+                }
+
+                let mime_type = mime_type.unwrap();
+
+                // Create a pipe for content transfer.
+                let (read, write) = pipe().map_err(Error::PipeCreation)?;
+
+                // Start the transfer.
+                offer.receive(mime_type.clone(), write.as_fd());
+                drop(write);
+
+                tx.send((read, mime_type)).await.expect("can't send");
             }
             None => return Err(Error::ClipboardEmpty),
         };
@@ -344,17 +373,17 @@ where
 /// # }
 /// ```
 #[inline]
-pub fn get_contents(
+pub async fn get_contents(
     clipboard: ClipboardType,
     seat: Seat<'_>,
     mime_type: MimeType<'_>,
     tx: mpsc::Sender<(PipeReader, String)>,
 ) -> Result<(), Error> {
-    get_contents_internal(clipboard, seat, mime_type, tx, None)
+    get_contents_internal(clipboard, seat, mime_type, tx, None).await
 }
 
 // The internal function accepts the socket name, used for tests.
-pub(crate) fn get_contents_internal(
+pub(crate) async fn get_contents_internal(
     clipboard: ClipboardType,
     seat: Seat<'_>,
     mime_type: MimeType<'_>,
@@ -362,45 +391,7 @@ pub(crate) fn get_contents_internal(
     socket_name: Option<OsString>,
 ) -> Result<(), Error> {
     let primary = clipboard == ClipboardType::Primary;
-    get_offer(primary, seat, socket_name, move |state, offer| {
-        let mut mime_types = state.offers.remove(&offer).unwrap();
-
-        // Find the desired MIME type.
-        let mime_type = match mime_type {
-            MimeType::Any => mime_types
-                .take("text/plain;charset=utf-8")
-                .or_else(|| mime_types.take("UTF8_STRING"))
-                .or_else(|| mime_types.iter().find(|x| is_text(x)).cloned())
-                .or_else(|| mime_types.drain().next()),
-            MimeType::Text => mime_types
-                .take("text/plain;charset=utf-8")
-                .or_else(|| mime_types.take("UTF8_STRING"))
-                .or_else(|| mime_types.drain().find(|x| is_text(x))),
-            MimeType::TextWithPriority(priority) => mime_types
-                .take(priority)
-                .or_else(|| mime_types.take("text/plain;charset=utf-8"))
-                .or_else(|| mime_types.take("UTF8_STRING"))
-                .or_else(|| mime_types.drain().find(|x| is_text(x))),
-            MimeType::Specific(mime_type) => mime_types.take(mime_type),
-        };
-
-        // Check if a suitable MIME type is copied.
-        if mime_type.is_none() {
-            return Err(Error::NoMimeType);
-        }
-
-        let mime_type = mime_type.unwrap();
-
-        // Create a pipe for content transfer.
-        let (read, write) = pipe().map_err(Error::PipeCreation)?;
-
-        // Start the transfer.
-        offer.receive(mime_type.clone(), write.as_fd());
-        drop(write);
-
-        tx.send((read, mime_type)).expect("can't send");
-        Ok(())
-    })?;
+    get_offer(primary, seat, mime_type, tx, socket_name).await?;
 
     Ok(())
 }
