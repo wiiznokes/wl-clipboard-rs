@@ -117,4 +117,5 @@ mod tests;
 
 pub mod copy;
 pub mod paste;
+pub mod paste_watch;
 pub mod utils;
