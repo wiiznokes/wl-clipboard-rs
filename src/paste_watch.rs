@@ -331,7 +331,9 @@ async fn get_offer(
 
                 tx.send((read, mime_type)).await.expect("can't send");
             }
-            None => return Err(Error::ClipboardEmpty),
+            None => {
+                log::info!("keyboard is empty")
+            },
         };
     }
 }
