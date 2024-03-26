@@ -40,7 +40,6 @@ wayland-backend = "0.3.3"
 wayland-client = "0.31.2"
 wayland-protocols = { version = "0.31.2", features = ["client"] }
 wayland-protocols-wlr = { version = "0.2.0", features = ["client"] }
-tokio = { version = "1.36", features = ["sync"] }
 
 [dev-dependencies]
 wayland-server = "0.31.1"

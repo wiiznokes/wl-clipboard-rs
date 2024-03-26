@@ -1,17 +1,15 @@
 //! Getting the offered MIME types and the clipboard contents.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
 use std::io;
 use std::os::fd::AsFd;
-use tokio::sync::mpsc;
 
 use os_pipe::{pipe, PipeReader};
 use wayland_client::globals::GlobalListContents;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_client::{
-    delegate_dispatch, event_created_child, ConnectError, Dispatch, DispatchError,
+    delegate_dispatch, event_created_child, ConnectError, Dispatch, DispatchError, EventQueue,
 };
 use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_device_v1::{
     self, ZwlrDataControlDeviceV1,
@@ -232,49 +230,100 @@ impl Dispatch<ZwlrDataControlOfferV1, ()> for State {
     }
 }
 
-async fn get_offer(
+pub struct Watcher {
+    state: State,
+    queue: EventQueue<State>,
     primary: bool,
-    seat: Seat<'_>,
-    mime_type: MimeType<'_>,
-    tx: mpsc::Sender<(PipeReader, String)>,
-    socket_name: Option<OsString>,
-) -> Result<(), Error> {
-    let (mut queue, mut common) = initialize(primary, socket_name)?;
+}
 
-    // Check if there are no seats.
-    if common.seats.is_empty() {
-        return Err(Error::NoSeats);
+impl Watcher {
+    pub fn init(clipboard: ClipboardType) -> Result<Self, Error> {
+        let primary = clipboard == ClipboardType::Primary;
+        let (queue, mut common) = initialize::<State>(primary, None)?;
+
+        // Check if there are no seats.
+        if common.seats.is_empty() {
+            return Err(Error::NoSeats);
+        }
+
+        // Go through the seats and get their data devices.
+        for (seat, data) in &mut common.seats {
+            let device =
+                common
+                    .clipboard_manager
+                    .get_data_device(seat, &queue.handle(), seat.clone());
+            data.set_device(Some(device));
+        }
+
+        let state = State {
+            common,
+            offers: HashMap::new(),
+            got_primary_selection: false,
+            events: Vec::new(),
+        };
+
+        Ok(Watcher {
+            state,
+            queue,
+            primary,
+        })
     }
 
-    // Go through the seats and get their data devices.
-    for (seat, data) in &mut common.seats {
-        let device = common
-            .clipboard_manager
-            .get_data_device(seat, &queue.handle(), seat.clone());
-        data.set_device(Some(device));
-    }
-
-    let mut state = State {
-        common,
-        offers: HashMap::new(),
-        got_primary_selection: false,
-        events: Vec::new(),
-    };
-
-    loop {
-        queue
-            .blocking_dispatch(&mut state)
+    /// Retrieves the clipboard contents.
+    ///
+    /// This function returns a tuple of the reading end of a pipe containing the clipboard contents
+    /// and the actual MIME type of the contents.
+    ///
+    /// If `seat` is `None`, uses an unspecified seat (it depends on the order returned by the
+    /// compositor). This is perfectly fine when only a single seat is present, so for most
+    /// configurations.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # extern crate wl_clipboard_rs;
+    /// # fn foo() -> Result<(), Box<dyn std::error::Error>> {
+    /// use std::io::Read;
+    /// use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
+    ///
+    /// let result = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Any);
+    /// match result {
+    ///     Ok((mut pipe, mime_type)) => {
+    ///         println!("Got data of the {} MIME type", &mime_type);
+    ///
+    ///         let mut contents = vec![];
+    ///         pipe.read_to_end(&mut contents)?;
+    ///         println!("Read {} bytes of data", contents.len());
+    ///     }
+    ///
+    ///     Err(Error::NoSeats) | Err(Error::ClipboardEmpty) | Err(Error::NoMimeType) => {
+    ///         // The clipboard is empty, nothing to worry about.
+    ///     }
+    ///
+    ///     Err(err) => Err(err)?
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn start_watching(
+        &mut self,
+        seat: Seat<'_>,
+        mime_type: MimeType<'_>,
+    ) -> Result<(PipeReader, String), Error> {
+        self.queue
+            .blocking_dispatch(&mut self.state)
             .map_err(Error::WaylandCommunication)?;
 
         // Check if the compositor supports primary selection.
-        if primary && !state.got_primary_selection {
+        if self.primary && !self.state.got_primary_selection {
             return Err(Error::PrimarySelectionUnsupported);
         }
 
         // Figure out which offer we're interested in.
         let data = match seat {
-            Seat::Unspecified => state.common.seats.values().next(),
-            Seat::Specific(name) => state
+            Seat::Unspecified => self.state.common.seats.values().next(),
+            Seat::Specific(name) => self
+                .state
                 .common
                 .seats
                 .values()
@@ -285,7 +334,7 @@ async fn get_offer(
             return Err(Error::SeatNotFound);
         };
 
-        let offer = if primary {
+        let offer = if self.primary {
             &data.primary_offer
         } else {
             &data.offer
@@ -294,7 +343,7 @@ async fn get_offer(
         // Check if we found anything.
         match offer.clone() {
             Some(offer) => {
-                let mut mime_types = state.offers.remove(&offer).unwrap();
+                let mut mime_types = self.state.offers.remove(&offer).unwrap();
 
                 // Find the desired MIME type.
                 let mime_type = match mime_type {
@@ -329,71 +378,12 @@ async fn get_offer(
                 offer.receive(mime_type.clone(), write.as_fd());
                 drop(write);
 
-                tx.send((read, mime_type)).await.expect("can't send");
+                return Ok((read, mime_type));
             }
             None => {
-                log::info!("keyboard is empty")
-            },
+                log::info!("keyboard is empty");
+                return Err(Error::ClipboardEmpty);
+            }
         };
     }
-}
-
-/// Retrieves the clipboard contents.
-///
-/// This function returns a tuple of the reading end of a pipe containing the clipboard contents
-/// and the actual MIME type of the contents.
-///
-/// If `seat` is `None`, uses an unspecified seat (it depends on the order returned by the
-/// compositor). This is perfectly fine when only a single seat is present, so for most
-/// configurations.
-///
-/// # Examples
-///
-/// ```no_run
-/// # extern crate wl_clipboard_rs;
-/// # fn foo() -> Result<(), Box<dyn std::error::Error>> {
-/// use std::io::Read;
-/// use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
-///
-/// let result = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Any);
-/// match result {
-///     Ok((mut pipe, mime_type)) => {
-///         println!("Got data of the {} MIME type", &mime_type);
-///
-///         let mut contents = vec![];
-///         pipe.read_to_end(&mut contents)?;
-///         println!("Read {} bytes of data", contents.len());
-///     }
-///
-///     Err(Error::NoSeats) | Err(Error::ClipboardEmpty) | Err(Error::NoMimeType) => {
-///         // The clipboard is empty, nothing to worry about.
-///     }
-///
-///     Err(err) => Err(err)?
-/// }
-/// # Ok(())
-/// # }
-/// ```
-#[inline]
-pub async fn get_contents(
-    clipboard: ClipboardType,
-    seat: Seat<'_>,
-    mime_type: MimeType<'_>,
-    tx: mpsc::Sender<(PipeReader, String)>,
-) -> Result<(), Error> {
-    get_contents_internal(clipboard, seat, mime_type, tx, None).await
-}
-
-// The internal function accepts the socket name, used for tests.
-pub(crate) async fn get_contents_internal(
-    clipboard: ClipboardType,
-    seat: Seat<'_>,
-    mime_type: MimeType<'_>,
-    tx: mpsc::Sender<(PipeReader, String)>,
-    socket_name: Option<OsString>,
-) -> Result<(), Error> {
-    let primary = clipboard == ClipboardType::Primary;
-    get_offer(primary, seat, mime_type, tx, socket_name).await?;
-
-    Ok(())
 }
