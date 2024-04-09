@@ -253,6 +253,16 @@ struct State {
     error: Option<DataSourceError>,
 }
 
+impl State {
+    fn is_fatal_error(&self) -> bool {
+        match &self.error {
+            Some(DataSourceError::Copy(_)) => false,
+            Some(_) => true,
+            None => false,
+        }
+    }
+}
+
 delegate_dispatch!(State: [WlSeat: ()] => common::State);
 
 impl AsMut<common::State> for State {
@@ -372,7 +382,7 @@ impl Dispatch<ZwlrDataControlSourceV1, ()> for State {
                     false
                 };
 
-                if done || state.error.is_some() {
+                if done || state.is_fatal_error() {
                     state.should_quit = true;
                     source.destroy();
                 }
@@ -1080,7 +1090,9 @@ pub(crate) fn copy_internal(
                     drop(tx.send(None));
 
                     // There's nobody listening for errors at this point, just drop it.
-                    drop(prepared_copy.serve());
+                    if let Err(e) = prepared_copy.serve() {
+                        log::error!("{:?}", e);
+                    }
                 }
                 Err(err) => drop(tx.send(Some(err))),
             },
