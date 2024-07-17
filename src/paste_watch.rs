@@ -20,7 +20,6 @@ use wayland_protocols_wlr::data_control::v1::client::zwlr_data_control_offer_v1:
 };
 
 use crate::common::{self, initialize};
-use crate::utils::is_text;
 
 /// The clipboard to operate on.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, PartialOrd, Ord, Default)]
@@ -305,11 +304,14 @@ impl Watcher {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn start_watching(
+    pub fn start_watching<F>(
         &mut self,
         seat: Seat<'_>,
-        mime_type: MimeType<'_>,
-    ) -> Result<(PipeReader, String), Error> {
+        f: F,
+    ) -> Result<Vec<(PipeReader, String)>, Error>
+    where
+        F: Fn(HashSet<String>) -> Vec<String>,
+    {
         self.queue
             .blocking_dispatch(&mut self.state)
             .map_err(Error::WaylandCommunication)?;
@@ -343,42 +345,27 @@ impl Watcher {
         // Check if we found anything.
         match offer.clone() {
             Some(offer) => {
-                let mut mime_types = self.state.offers.remove(&offer).unwrap();
+                let mime_types = self.state.offers.remove(&offer).unwrap();
 
-                // Find the desired MIME type.
-                let mime_type = match mime_type {
-                    MimeType::Any => mime_types
-                        .take("text/plain;charset=utf-8")
-                        .or_else(|| mime_types.take("UTF8_STRING"))
-                        .or_else(|| mime_types.iter().find(|x| is_text(x)).cloned())
-                        .or_else(|| mime_types.drain().next()),
-                    MimeType::Text => mime_types
-                        .take("text/plain;charset=utf-8")
-                        .or_else(|| mime_types.take("UTF8_STRING"))
-                        .or_else(|| mime_types.drain().find(|x| is_text(x))),
-                    MimeType::TextWithPriority(priority) => mime_types
-                        .take(priority)
-                        .or_else(|| mime_types.take("text/plain;charset=utf-8"))
-                        .or_else(|| mime_types.take("UTF8_STRING"))
-                        .or_else(|| mime_types.drain().find(|x| is_text(x))),
-                    MimeType::Specific(mime_type) => mime_types.take(mime_type),
-                };
+                let desired_mime_types = f(mime_types);
 
-                // Check if a suitable MIME type is copied.
-                if mime_type.is_none() {
+                if desired_mime_types.is_empty() {
                     return Err(Error::NoMimeType);
                 }
 
-                let mime_type = mime_type.unwrap();
+                let mut res = Vec::with_capacity(desired_mime_types.len());
 
-                // Create a pipe for content transfer.
-                let (read, write) = pipe().map_err(Error::PipeCreation)?;
+                for mime_type in desired_mime_types {
+                    // Create a pipe for content transfer.
+                    let (read, write) = pipe().map_err(Error::PipeCreation)?;
 
-                // Start the transfer.
-                offer.receive(mime_type.clone(), write.as_fd());
-                drop(write);
+                    // Start the transfer.
+                    offer.receive(mime_type.clone(), write.as_fd());
+                    drop(write);
+                    res.push((read, mime_type));
+                }
 
-                return Ok((read, mime_type));
+                return Ok(res);
             }
             None => {
                 log::info!("keyboard is empty");
