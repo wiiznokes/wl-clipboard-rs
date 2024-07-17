@@ -268,47 +268,14 @@ impl Watcher {
         })
     }
 
-    /// Retrieves the clipboard contents.
-    ///
-    /// This function returns a tuple of the reading end of a pipe containing the clipboard contents
-    /// and the actual MIME type of the contents.
-    ///
-    /// If `seat` is `None`, uses an unspecified seat (it depends on the order returned by the
-    /// compositor). This is perfectly fine when only a single seat is present, so for most
-    /// configurations.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # extern crate wl_clipboard_rs;
-    /// # fn foo() -> Result<(), Box<dyn std::error::Error>> {
-    /// use std::io::Read;
-    /// use wl_clipboard_rs::{paste::{get_contents, ClipboardType, Error, MimeType, Seat}};
-    ///
-    /// let result = get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Any);
-    /// match result {
-    ///     Ok((mut pipe, mime_type)) => {
-    ///         println!("Got data of the {} MIME type", &mime_type);
-    ///
-    ///         let mut contents = vec![];
-    ///         pipe.read_to_end(&mut contents)?;
-    ///         println!("Read {} bytes of data", contents.len());
-    ///     }
-    ///
-    ///     Err(Error::NoSeats) | Err(Error::ClipboardEmpty) | Err(Error::NoMimeType) => {
-    ///         // The clipboard is empty, nothing to worry about.
-    ///     }
-    ///
-    ///     Err(err) => Err(err)?
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// The returned pipe readers will be orderer by the mime types
+    /// returned by `f`.
+    /// They should be readed in order
     pub fn start_watching<F>(
         &mut self,
         seat: Seat<'_>,
         f: F,
-    ) -> Result<Vec<(PipeReader, String)>, Error>
+    ) -> Result<std::vec::IntoIter<(PipeReader, String)>, Error>
     where
         F: Fn(HashSet<String>) -> Vec<String>,
     {
@@ -365,7 +332,7 @@ impl Watcher {
                     res.push((read, mime_type));
                 }
 
-                return Ok(res);
+                return Ok(res.into_iter());
             }
             None => {
                 log::info!("keyboard is empty");
