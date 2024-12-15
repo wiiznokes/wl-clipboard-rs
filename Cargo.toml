@@ -2,7 +2,7 @@
 members = ["wl-clipboard-rs-tools"]
 
 [workspace.package]
-version = "0.8.1" # remember to update html_root_url
+version = "0.8.1"                                        # remember to update html_root_url
 authors = ["Ivan Molodetskikh <yalterz@gmail.com>"]
 edition = "2021"
 license = "MIT/Apache-2.0"
@@ -10,9 +10,9 @@ repository = "https://github.com/YaLTeR/wl-clipboard-rs"
 keywords = ["wayland", "clipboard"]
 
 [workspace.dependencies]
-libc = "0.2.153"
-log = "0.4.21"
-rustix = "0.38.31"
+libc = "0.2"
+log = "0.4"
+rustix = "0.38"
 
 [package]
 name = "wl-clipboard-rs"
@@ -31,22 +31,22 @@ categories = ["os"]
 [dependencies]
 libc.workspace = true
 log.workspace = true
-os_pipe = { version = "1.1.5", features = ["io_safety"] }
+os_pipe = { version = "1", features = ["io_safety"] }
 rustix = { workspace = true, features = ["fs", "event"] }
-tempfile = "3.10.1"
-thiserror = "1"
-tree_magic_mini = "3.0.3"
-wayland-backend = "0.3.3"
-wayland-client = "0.31.2"
-wayland-protocols = { version = "0.31.2", features = ["client"] }
-wayland-protocols-wlr = { version = "0.2.0", features = ["client"] }
+tempfile = "3"
+thiserror = "2"
+tree_magic_mini = "3"
+wayland-backend = "0.3"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [dev-dependencies]
-wayland-server = "0.31.1"
-wayland-protocols = { version = "0.31.2", features = ["server"] }
-wayland-protocols-wlr = { version = "0.2.0", features = ["server"] }
-proptest = "1.4.0"
-proptest-derive = "0.4.0"
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server"] }
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+proptest = "1.5"
+proptest-derive = "0.5"
 
 [features]
 # Link to libwayland-client.so instead of using the Rust implementation.
