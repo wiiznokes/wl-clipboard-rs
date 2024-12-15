@@ -5,6 +5,7 @@ use std::io;
 use std::os::fd::AsFd;
 
 use os_pipe::{pipe, PipeReader};
+use tokio::net::unix::pipe::Receiver;
 use wayland_client::globals::GlobalListContents;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_seat::WlSeat;
@@ -275,7 +276,7 @@ impl Watcher {
         &mut self,
         seat: Seat<'_>,
         f: F,
-    ) -> Result<std::vec::IntoIter<(PipeReader, String)>, Error>
+    ) -> Result<std::vec::IntoIter<(Receiver, String)>, Error>
     where
         F: Fn(HashSet<String>) -> Vec<String>,
     {
@@ -324,7 +325,8 @@ impl Watcher {
 
                 for mime_type in desired_mime_types {
                     // Create a pipe for content transfer.
-                    let (read, write) = pipe().map_err(Error::PipeCreation)?;
+                    let (write, read) =
+                        tokio::net::unix::pipe::pipe().map_err(Error::PipeCreation)?;
 
                     // Start the transfer.
                     offer.receive(mime_type.clone(), write.as_fd());
