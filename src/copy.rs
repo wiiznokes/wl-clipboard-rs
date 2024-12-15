@@ -942,24 +942,7 @@ fn prepare_copy_internal(
                 }
             }
         }
-
-        // If the MIME type is text, offer it in some other common formats.
-        if let Some(text_data_path) = text_data_path {
-            let text_mimes = [
-                "text/plain;charset=utf-8",
-                "text/plain",
-                "STRING",
-                "UTF8_STRING",
-                "TEXT",
-            ];
-            for &mime_type in &text_mimes {
-                // We don't want to overwrite an explicit mime type, because it might be bound to a
-                // different data_path
-                if !data_paths.contains_key(mime_type) {
-                    data_paths.insert(mime_type.to_string(), text_data_path.clone());
-                }
-            }
-        }
+      
         data_paths
     };
 
