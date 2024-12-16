@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::AsFd;
 
-use os_pipe::{pipe, PipeReader};
 use tokio::net::unix::pipe::Receiver;
 use wayland_client::globals::GlobalListContents;
 use wayland_client::protocol::wl_registry::WlRegistry;
@@ -269,17 +268,10 @@ impl Watcher {
         })
     }
 
-    /// The returned pipe readers will be orderer by the mime types
-    /// returned by `f`.
-    /// They should be readed in order
-    pub fn start_watching<F>(
+    pub fn start_watching(
         &mut self,
         seat: Seat<'_>,
-        f: F,
-    ) -> Result<std::vec::IntoIter<(Receiver, String)>, Error>
-    where
-        F: Fn(HashSet<String>) -> Vec<String>,
-    {
+    ) -> Result<std::vec::IntoIter<(Receiver, String)>, Error> {
         self.queue
             .blocking_dispatch(&mut self.state)
             .map_err(Error::WaylandCommunication)?;
@@ -315,15 +307,9 @@ impl Watcher {
             Some(offer) => {
                 let mime_types = self.state.offers.remove(&offer).unwrap();
 
-                let desired_mime_types = f(mime_types);
+                let mut res = Vec::with_capacity(mime_types.len());
 
-                if desired_mime_types.is_empty() {
-                    return Err(Error::NoMimeType);
-                }
-
-                let mut res = Vec::with_capacity(desired_mime_types.len());
-
-                for mime_type in desired_mime_types {
+                for mime_type in mime_types {
                     // Create a pipe for content transfer.
                     let (write, read) =
                         tokio::net::unix::pipe::pipe().map_err(Error::PipeCreation)?;
