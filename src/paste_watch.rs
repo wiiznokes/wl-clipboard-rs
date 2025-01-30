@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::AsFd;
 
-use os_pipe::{pipe, PipeReader};
+use tokio::net::unix::pipe::Receiver;
 use wayland_client::globals::GlobalListContents;
 use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_seat::WlSeat;
@@ -271,7 +271,7 @@ impl Watcher {
     pub fn start_watching(
         &mut self,
         seat: Seat<'_>,
-    ) -> Result<impl Iterator<Item = (String, PipeReader)>, Error> {
+    ) -> Result<impl Iterator<Item = (String, Receiver)>, Error> {
         self.queue
             .blocking_dispatch(&mut self.state)
             .map_err(Error::WaylandCommunication)?;
@@ -311,7 +311,8 @@ impl Watcher {
                     .into_iter()
                     .map(move |mime_type| {
                         // Create a pipe for content transfer.
-                        let (read, write) = pipe().map_err(Error::PipeCreation)?;
+                        let (write, read) =
+                            tokio::net::unix::pipe::pipe().map_err(Error::PipeCreation)?;
 
                         // Start the transfer.
                         offer.receive(mime_type.clone(), write.as_fd());
@@ -319,7 +320,7 @@ impl Watcher {
 
                         Ok((mime_type, read))
                     })
-                    .filter_map(|e: Result<(String, PipeReader), Error>| e.ok());
+                    .filter_map(|e: Result<_, Error>| e.ok());
 
                 return Ok(res);
             }
