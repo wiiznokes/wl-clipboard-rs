@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.9.2 (14th Mar 2025)
+
+- Added support for the `ext-data-control` protocol. It will be used instead of `wlr-data-control` when available.
+- Updated dependencies.
+
 ## v0.9.1 (6th Oct 2024)
 
 - Added man page and shell completion generation to `wl-clipboard-rs-tools`.
