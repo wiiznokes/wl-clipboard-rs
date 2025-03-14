@@ -32,10 +32,9 @@ pub enum Error {
     WaylandCommunication(#[source] WaylandError),
 
     #[error(
-        "A required Wayland protocol (ext-data-control, or wlr-data-control version {version}) \
-         is not supported by the compositor"
+        "A required Wayland protocol ({name} version {version}) is not supported by the compositor"
     )]
-    MissingProtocol { version: u32 },
+    MissingProtocol { name: &'static str, version: u32 },
 }
 
 impl<S> Dispatch<WlSeat, (), S> for State
@@ -107,7 +106,12 @@ where
 
     let clipboard_manager = match ext_manager.or_else(wlr_manager) {
         Some(manager) => manager,
-        None => return Err(Error::MissingProtocol { version: wlr_v }),
+        None => {
+            return Err(Error::MissingProtocol {
+                name: "ext-data-control, or wlr-data-control",
+                version: wlr_v,
+            })
+        }
     };
 
     let registry = globals.registry();

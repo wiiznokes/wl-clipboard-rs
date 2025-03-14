@@ -65,7 +65,13 @@ fn get_mime_types_no_data_control() {
 
     let result =
         get_mime_types_internal(ClipboardType::Regular, Seat::Unspecified, Some(socket_name));
-    assert!(matches!(result, Err(Error::MissingProtocol { version: 1 })));
+    assert!(matches!(
+        result,
+        Err(Error::MissingProtocol {
+            name: "ext-data-control, or wlr-data-control",
+            version: 1
+        })
+    ));
 }
 
 #[test]
@@ -88,7 +94,13 @@ fn get_mime_types_no_data_control_2() {
 
     let result =
         get_mime_types_internal(ClipboardType::Primary, Seat::Unspecified, Some(socket_name));
-    assert!(matches!(result, Err(Error::MissingProtocol { version: 2 })));
+    assert!(matches!(
+        result,
+        Err(Error::MissingProtocol {
+            name: "ext-data-control, or wlr-data-control",
+            version: 2
+        })
+    ));
 }
 
 #[test]

@@ -188,10 +188,11 @@ pub enum Error {
     WaylandCommunication(#[source] DispatchError),
 
     #[error(
-        "A required Wayland protocol (ext-data-control, or wlr-data-control version {version}) \
-         is not supported by the compositor"
+        "A required Wayland protocol ({} version {}) is not supported by the compositor",
+        name,
+        version
     )]
-    MissingProtocol { version: u32 },
+    MissingProtocol { name: &'static str, version: u32 },
 
     #[error("The compositor does not support primary selection")]
     PrimarySelectionUnsupported,
@@ -220,7 +221,7 @@ impl From<common::Error> for Error {
             SocketOpenError(err) => Error::SocketOpenError(err),
             WaylandConnection(err) => Error::WaylandConnection(err),
             WaylandCommunication(err) => Error::WaylandCommunication(err.into()),
-            MissingProtocol { version } => Error::MissingProtocol { version },
+            MissingProtocol { name, version } => Error::MissingProtocol { name, version },
         }
     }
 }
