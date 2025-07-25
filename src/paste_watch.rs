@@ -268,10 +268,8 @@ impl Watcher {
         })
     }
 
-    pub fn start_watching(
-        &mut self,
-        seat: Seat<'_>,
-    ) -> Result<impl Iterator<Item = (String, Receiver)>, Error> {
+    // note: returning an iter cause some bugs with pipes
+    pub fn start_watching(&mut self, seat: Seat<'_>) -> Result<Vec<(String, Receiver)>, Error> {
         self.queue
             .blocking_dispatch(&mut self.state)
             .map_err(Error::WaylandCommunication)?;
@@ -307,20 +305,19 @@ impl Watcher {
             Some(offer) => {
                 let mime_types = self.state.offers.remove(&offer).unwrap();
 
-                let res = mime_types
-                    .into_iter()
-                    .map(move |mime_type| {
-                        // Create a pipe for content transfer.
-                        let (write, read) =
-                            tokio::net::unix::pipe::pipe().map_err(Error::PipeCreation)?;
+                let mut res = Vec::with_capacity(mime_types.len());
 
-                        // Start the transfer.
-                        offer.receive(mime_type.clone(), write.as_fd());
-                        drop(write);
+                for mime_type in mime_types {
+                    // Create a pipe for content transfer.
+                    let (write, read) =
+                        tokio::net::unix::pipe::pipe().map_err(Error::PipeCreation)?;
 
-                        Ok((mime_type, read))
-                    })
-                    .filter_map(|e: Result<_, Error>| e.ok());
+                    // Start the transfer.
+                    offer.receive(mime_type.clone(), write.as_fd());
+                    drop(write);
+
+                    res.push((mime_type, read));
+                }
 
                 return Ok(res);
             }
